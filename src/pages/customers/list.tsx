@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Table,
   Input,
@@ -12,15 +12,21 @@ import {
   Row,
   Col,
   Avatar,
+  List,
   message
 } from 'antd';
-import { PlusOutlined, SearchOutlined, UserOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, WarningOutlined } from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import type { RootState } from '../../store';
 import { addCustomer, deleteCustomer } from '../../store';
 import type { Customer } from '../../types';
 import { formatDate, getStatusText, generateId, generateAvatar } from '../../utils/format';
+import {
+  getSkinAlert,
+  FOLLOW_UP_DECLINE_THRESHOLD,
+  type SkinAlert
+} from '../../utils/skinAnalysis';
 import dayjs from 'dayjs';
 
 const CustomerList: React.FC = () => {
@@ -30,6 +36,28 @@ const CustomerList: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
+
+  // 每位顾客的皮肤预警均由检测数据实时派生，记录被修改后自动重算
+  const skinAlerts = useMemo(() => {
+    const map = new Map<string, SkinAlert>();
+    state.customers.forEach((customer) => {
+      const alert = getSkinAlert(
+        state.skinAnalyses.filter((s) => s.customerId === customer.id)
+      );
+      if (alert) map.set(customer.id, alert);
+    });
+    return map;
+  }, [state.customers, state.skinAnalyses]);
+
+  // 连续变差达到阈值的顾客单独归入跟进名单
+  const followUpCustomers = useMemo(
+    () =>
+      state.customers.filter(
+        (c) =>
+          (skinAlerts.get(c.id)?.consecutiveDeclines ?? 0) >= FOLLOW_UP_DECLINE_THRESHOLD
+      ),
+    [state.customers, skinAlerts]
+  );
 
   const filteredCustomers = state.customers.filter(
     (c) =>
@@ -83,14 +111,26 @@ const CustomerList: React.FC = () => {
       title: '顾客',
       dataIndex: 'name',
       key: 'name',
-      render: (_: string, record: Customer) => (
-        <Space>
-          <Avatar src={record.avatar} />
-          <span style={{ cursor: 'pointer' }} onClick={() => navigate(`/customers/${record.id}`)}>
-            {record.name}
-          </span>
-        </Space>
-      ),
+      render: (_: string, record: Customer) => {
+        const alert = skinAlerts.get(record.id);
+        const consecutiveDeclines = alert?.consecutiveDeclines ?? 0;
+        return (
+          <Space size={8} wrap>
+            <Avatar src={record.avatar} />
+            <span style={{ cursor: 'pointer' }} onClick={() => navigate(`/customers/${record.id}`)}>
+              {record.name}
+            </span>
+            {alert?.flagged &&
+              (consecutiveDeclines >= FOLLOW_UP_DECLINE_THRESHOLD ? (
+                <Tag color="red" icon={<WarningOutlined />}>
+                  连续变差{consecutiveDeclines}次
+                </Tag>
+              ) : (
+                <Tag color="orange">需关注</Tag>
+              ))}
+          </Space>
+        );
+      },
     },
     {
       title: '手机号',
@@ -175,6 +215,58 @@ const CustomerList: React.FC = () => {
           添加顾客
         </Button>
       </div>
+
+      {followUpCustomers.length > 0 && (
+        <div className="card-wrapper" style={{ marginBottom: 16, borderLeft: '4px solid #ff4d4f' }}>
+          <Space align="center" style={{ marginBottom: 8 }}>
+            <WarningOutlined style={{ color: '#ff4d4f', fontSize: 18 }} />
+            <span style={{ fontSize: 16, fontWeight: 600 }}>皮肤状况跟进名单</span>
+            <Tag color="red">{followUpCustomers.length} 人</Tag>
+            <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+              连续 {FOLLOW_UP_DECLINE_THRESHOLD} 次及以上检测变差，请优先跟进
+            </span>
+          </Space>
+          <List
+            dataSource={followUpCustomers}
+            renderItem={(customer) => {
+              const alert = skinAlerts.get(customer.id);
+              return (
+                <List.Item
+                  key={customer.id}
+                  style={{ padding: '8px 0' }}
+                  actions={[
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => navigate(`/customers/${customer.id}`)}
+                    >
+                      查看详情
+                    </Button>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    avatar={<Avatar src={customer.avatar} />}
+                    title={
+                      <Space size={8}>
+                        <span>{customer.name}</span>
+                        <Tag color="red">连续变差{alert?.consecutiveDeclines}次</Tag>
+                      </Space>
+                    }
+                    description={
+                      <span>
+                        最近检测: {alert ? formatDate(alert.latest.analysis.analysisDate) : '-'}
+                        {alert?.latest.sensitivityObvious && ' · 敏感度明显'}
+                        {alert?.latest.conditionWorsened && ' · 整体状况变差'}
+                        {' · '}电话 {customer.phone}
+                      </span>
+                    }
+                  />
+                </List.Item>
+              );
+            }}
+          />
+        </div>
+      )}
 
       <div className="search-bar">
         <Row gutter={16}>

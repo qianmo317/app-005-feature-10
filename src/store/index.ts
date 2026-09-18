@@ -134,6 +134,13 @@ const appSlice = createSlice({
       state.skinAnalyses.unshift(action.payload);
       saveState(state);
     },
+    updateSkinAnalysis: (state, action: PayloadAction<SkinAnalysis>) => {
+      const index = state.skinAnalyses.findIndex(s => s.id === action.payload.id);
+      if (index !== -1) {
+        state.skinAnalyses[index] = action.payload;
+        saveState(state);
+      }
+    },
     addAllergy: (state, action: PayloadAction<Allergy>) => {
       state.allergies.unshift(action.payload);
       saveState(state);
@@ -246,6 +253,7 @@ export const {
   updateCustomer,
   deleteCustomer,
   addSkinAnalysis,
+  updateSkinAnalysis,
   addAllergy,
   updateAllergy,
   deleteAllergy,

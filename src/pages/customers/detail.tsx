@@ -25,7 +25,10 @@ import {
   EditOutlined,
   DeleteOutlined,
   ClockCircleOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
+  MinusOutlined
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
@@ -33,13 +36,48 @@ import ReactECharts from 'echarts-for-react';
 import type { RootState } from '../../store';
 import {
   addSkinAnalysis,
+  updateSkinAnalysis,
   addAllergy,
   updateAllergy,
   deleteAllergy
 } from '../../store';
 import type { SkinAnalysis, Allergy } from '../../types';
 import { formatDate, formatCurrency, generateId, getStatusText } from '../../utils/format';
+import {
+  buildAnalysisComparisons,
+  type AnalysisComparison,
+  type ChangeDirection
+} from '../../utils/skinAnalysis';
 import dayjs from 'dayjs';
+
+const DIRECTION_META: Record<ChangeDirection, { color: string; text: string; icon: React.ReactNode }> = {
+  improved: { color: '#52c41a', text: '好转', icon: <ArrowUpOutlined /> },
+  worsened: { color: '#ff4d4f', text: '变差', icon: <ArrowDownOutlined /> },
+  same: { color: '#8c8c8c', text: '持平', icon: <MinusOutlined /> },
+};
+
+/** 单条指标对比：当前值 + 变化方向 + 上次数值 */
+const MetricChange: React.FC<{ label: string; current: string; previous?: string; direction: ChangeDirection }> = ({
+  label,
+  current,
+  previous,
+  direction,
+}) => {
+  const meta = DIRECTION_META[direction];
+  return (
+    <span>
+      {label}: {current}
+      {previous !== undefined && (
+        <span style={{ fontSize: 12, marginLeft: 4 }}>
+          <span style={{ color: meta.color }}>
+            {meta.icon} {meta.text}
+          </span>
+          <span style={{ color: '#bfbfbf' }}>（上次: {previous}）</span>
+        </span>
+      )}
+    </span>
+  );
+};
 
 const CustomerDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -49,14 +87,16 @@ const CustomerDetail: React.FC = () => {
   const [skinAnalysisModal, setSkinAnalysisModal] = useState(false);
   const [allergyModal, setAllergyModal] = useState(false);
   const [editingAllergy, setEditingAllergy] = useState<Allergy | null>(null);
+  const [editingAnalysis, setEditingAnalysis] = useState<SkinAnalysis | null>(null);
   const [skinForm] = Form.useForm();
   const [allergyForm] = Form.useForm();
 
   const customer = state.customers.find((c) => c.id === id);
   const membership = state.memberships.find((m) => m.customerId === id);
-  const skinAnalyses = state.skinAnalyses
-    .filter((s) => s.customerId === id)
-    .sort((a, b) => new Date(b.analysisDate).getTime() - new Date(a.analysisDate).getTime());
+  // 对比结果由检测数据实时派生，修改记录后自动重算
+  const analysisComparisons = buildAnalysisComparisons(
+    state.skinAnalyses.filter((s) => s.customerId === id)
+  );
   const allergies = state.allergies.filter((a) => a.customerId === id);
   const serviceRecords = state.serviceRecords
     .filter((r) => r.customerId === id)
@@ -112,25 +152,58 @@ const CustomerDetail: React.FC = () => {
   const handleAddSkinAnalysis = async () => {
     try {
       const values = await skinForm.validateFields();
-      const analysis: SkinAnalysis = {
-        id: generateId(),
-        customerId: id!,
-        analysisDate: dayjs(values.analysisDate).format('YYYY-MM-DD'),
-        skinType: values.skinType,
-        oiliness: values.oiliness,
-        moisture: values.moisture,
-        elasticity: values.elasticity,
-        sensitivity: values.sensitivity,
-        skinCondition: values.skinCondition,
-        recommendations: values.recommendations,
-      };
-      dispatch(addSkinAnalysis(analysis));
-      message.success('添加皮肤分析成功');
+      if (editingAnalysis) {
+        dispatch(
+          updateSkinAnalysis({
+            ...editingAnalysis,
+            analysisDate: dayjs(values.analysisDate).format('YYYY-MM-DD'),
+            skinType: values.skinType,
+            oiliness: values.oiliness,
+            moisture: values.moisture,
+            elasticity: values.elasticity,
+            sensitivity: values.sensitivity,
+            skinCondition: values.skinCondition,
+            recommendations: values.recommendations,
+          })
+        );
+        message.success('更新皮肤分析成功，对比结果已重新计算');
+      } else {
+        const analysis: SkinAnalysis = {
+          id: generateId(),
+          customerId: id!,
+          analysisDate: dayjs(values.analysisDate).format('YYYY-MM-DD'),
+          skinType: values.skinType,
+          oiliness: values.oiliness,
+          moisture: values.moisture,
+          elasticity: values.elasticity,
+          sensitivity: values.sensitivity,
+          skinCondition: values.skinCondition,
+          recommendations: values.recommendations,
+        };
+        dispatch(addSkinAnalysis(analysis));
+        message.success('添加皮肤分析成功');
+      }
       setSkinAnalysisModal(false);
+      setEditingAnalysis(null);
       skinForm.resetFields();
     } catch {
       // validation error
     }
+  };
+
+  const handleEditAnalysis = (analysis: SkinAnalysis) => {
+    setEditingAnalysis(analysis);
+    skinForm.setFieldsValue({
+      analysisDate: dayjs(analysis.analysisDate),
+      skinType: analysis.skinType,
+      oiliness: analysis.oiliness,
+      moisture: analysis.moisture,
+      elasticity: analysis.elasticity,
+      sensitivity: analysis.sensitivity,
+      skinCondition: analysis.skinCondition,
+      recommendations: analysis.recommendations,
+    });
+    setSkinAnalysisModal(true);
   };
 
   const handleAddAllergy = async () => {
@@ -282,35 +355,74 @@ const CustomerDetail: React.FC = () => {
                     type="primary"
                     size="small"
                     icon={<PlusOutlined />}
-                    onClick={() => setSkinAnalysisModal(true)}
+                    onClick={() => {
+                      setEditingAnalysis(null);
+                      skinForm.resetFields();
+                      setSkinAnalysisModal(true);
+                    }}
                   >
                     添加记录
                   </Button>
                 }
               >
-                {skinAnalyses.length > 0 ? (
+                {analysisComparisons.length > 0 ? (
                   <List
-                    dataSource={skinAnalyses}
-                    renderItem={(item) => (
-                      <List.Item key={item.id} style={{ padding: '16px 0', borderBottom: '1px solid #f5f5f5' }}>
-                        <List.Item.Meta
-                          avatar={<ClockCircleOutlined style={{ fontSize: 24, color: '#C9A86C' }} />}
-                          title={`${formatDate(item.analysisDate)} · ${item.skinType}`}
-                          description={
-                            <Space direction="vertical" size={4}>
-                              <Space size={16}>
-                                <span>油脂: {item.oiliness}</span>
-                                <span>水分: {item.moisture}</span>
-                                <span>弹性: {item.elasticity}</span>
-                                <span>敏感: {item.sensitivity}</span>
+                    dataSource={analysisComparisons}
+                    renderItem={(comparison: AnalysisComparison) => {
+                      const item = comparison.analysis;
+                      return (
+                        <List.Item
+                          key={item.id}
+                          style={{ padding: '16px 0', borderBottom: '1px solid #f5f5f5' }}
+                          actions={[
+                            <Button
+                              type="link"
+                              size="small"
+                              icon={<EditOutlined />}
+                              onClick={() => handleEditAnalysis(item)}
+                            >
+                              编辑
+                            </Button>,
+                          ]}
+                        >
+                          <List.Item.Meta
+                            avatar={<ClockCircleOutlined style={{ fontSize: 24, color: '#C9A86C' }} />}
+                            title={
+                              <Space size={8} wrap>
+                                <span>{formatDate(item.analysisDate)} · {item.skinType}</span>
+                                {comparison.isFirst ? (
+                                  <Tag color="blue">初次建档</Tag>
+                                ) : (
+                                  comparison.isDecline && <Tag color="red">本次变差</Tag>
+                                )}
                               </Space>
-                              <span>状况: {item.skinCondition}</span>
-                              <span>建议: {item.recommendations}</span>
-                            </Space>
-                          }
-                        />
-                      </List.Item>
-                    )}
+                            }
+                            description={
+                              <Space direction="vertical" size={4}>
+                                <Space size={16} wrap>
+                                  {comparison.metrics.map((metric) => (
+                                    <MetricChange
+                                      key={metric.key}
+                                      label={metric.label}
+                                      current={metric.current}
+                                      previous={metric.previous}
+                                      direction={metric.direction}
+                                    />
+                                  ))}
+                                </Space>
+                                <MetricChange
+                                  label="状况"
+                                  current={item.skinCondition}
+                                  previous={comparison.previous?.skinCondition}
+                                  direction={comparison.conditionDirection}
+                                />
+                                <span>建议: {item.recommendations}</span>
+                              </Space>
+                            }
+                          />
+                        </List.Item>
+                      );
+                    }}
                   />
                 ) : (
                   <div className="empty-state">暂无皮肤分析记录</div>
@@ -502,10 +614,13 @@ const CustomerDetail: React.FC = () => {
       />
 
       <Modal
-        title="添加皮肤分析记录"
+        title={editingAnalysis ? '编辑皮肤分析记录' : '添加皮肤分析记录'}
         open={skinAnalysisModal}
         onOk={handleAddSkinAnalysis}
-        onCancel={() => setSkinAnalysisModal(false)}
+        onCancel={() => {
+          setSkinAnalysisModal(false);
+          setEditingAnalysis(null);
+        }}
         okText="确认"
         cancelText="取消"
         width={600}
