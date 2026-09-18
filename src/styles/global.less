@@ -327,6 +327,90 @@ body {
   color: @text-secondary-color;
 }
 
+// 皮肤检测指标对比（本次值 + 上次值 + 变化方向）
+.skin-metric-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.skin-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+
+  &-label {
+    color: @text-secondary-color;
+  }
+
+  &-value {
+    font-weight: 600;
+    color: @text-color;
+  }
+
+  &-trend {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    cursor: default;
+
+    &.better {
+      color: @success-color;
+    }
+
+    &.worse {
+      color: @error-color;
+    }
+
+    &.same {
+      color: @text-secondary-color;
+    }
+  }
+
+  &-prev {
+    text-decoration: line-through;
+    opacity: 0.85;
+  }
+
+  &-first {
+    color: #722ed1;
+    cursor: help;
+  }
+}
+
+// 顾客列表顶部的皮肤跟进提醒专区
+.skin-followup-card {
+  border-left: 4px solid @error-color;
+}
+
+.skin-followup-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff1f0;
+  border: 1px solid #ffccc7;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #ffccc7;
+    transform: translateY(-1px);
+  }
+}
+
+.skin-followup-name {
+  font-weight: 500;
+}
+
+.skin-followup-date {
+  font-size: 12px;
+  color: @text-secondary-color;
+}
+
 .ant-btn-primary {
   background: linear-gradient(135deg, #C9A86C 0%, #B8956A 100%);
   border-color: #C9A86C;

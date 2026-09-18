@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Table,
   Input,
@@ -12,15 +12,26 @@ import {
   Row,
   Col,
   Avatar,
+  Card,
+  Tooltip,
   message
 } from 'antd';
-import { PlusOutlined, SearchOutlined, UserOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import {
+  PlusOutlined,
+  SearchOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  WarningOutlined,
+  PhoneOutlined
+} from '@ant-design/icons';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import type { RootState } from '../../store';
 import { addCustomer, deleteCustomer } from '../../store';
 import type { Customer } from '../../types';
 import { formatDate, getStatusText, generateId, generateAvatar } from '../../utils/format';
+import { getAllCustomerSkinStatuses, type CustomerSkinStatus } from '../../utils/skinTrend';
+import { OverallTrendTag, WarningTags } from '../../components/SkinTrend';
 import dayjs from 'dayjs';
 
 const CustomerList: React.FC = () => {
@@ -30,6 +41,21 @@ const CustomerList: React.FC = () => {
   const [searchText, setSearchText] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
+
+  // 皮肤状态全部由检测数据现算：记录被改 / 删后，标记与跟进名单自动重算
+  const skinStatusMap = useMemo(
+    () => getAllCustomerSkinStatuses(state.skinAnalyses),
+    [state.skinAnalyses]
+  );
+
+  // 连续变差需跟进的顾客，连续次数多的排前面
+  const followUpCustomers = useMemo(
+    () =>
+      Array.from(skinStatusMap.values())
+        .filter((s) => s.followUp)
+        .sort((a, b) => b.decliningStreak - a.decliningStreak),
+    [skinStatusMap]
+  );
 
   const filteredCustomers = state.customers.filter(
     (c) =>
@@ -104,6 +130,36 @@ const CustomerList: React.FC = () => {
       render: (type: string) => <Tag color="blue">{type}</Tag>,
     },
     {
+      title: '近期皮肤',
+      key: 'skinStatus',
+      width: 240,
+      render: (_: unknown, record: Customer) => {
+        const skin = skinStatusMap.get(record.id);
+        if (!skin || !skin.latest || !skin.latestTrend) {
+          return <span style={{ color: '#bfbfbf' }}>暂无检测</span>;
+        }
+        return (
+          <Space direction="vertical" size={2}>
+            <Space size={4}>
+              <OverallTrendTag direction={skin.latestTrend.overall} />
+              {skin.warning && (
+                <WarningTags
+                  conditionWorse={skin.conditionWorse}
+                  sensitivityWorseToObvious={skin.sensitivityWorseToObvious}
+                />
+              )}
+            </Space>
+            <Tooltip title="最近一次检测日期">
+              <span style={{ fontSize: 12, color: '#8c8c8c' }}>
+                {formatDate(skin.latest.analysisDate)}
+                {skin.followUp ? ` · 连续${skin.decliningStreak}次变差` : ''}
+              </span>
+            </Tooltip>
+          </Space>
+        );
+      },
+    },
+    {
       title: '会员等级',
       key: 'membership',
       render: (_: unknown, record: Customer) => {
@@ -175,6 +231,45 @@ const CustomerList: React.FC = () => {
           添加顾客
         </Button>
       </div>
+
+      {followUpCustomers.length > 0 && (
+        <Card
+          className="card-wrapper skin-followup-card"
+          title={
+            <Space>
+              <WarningOutlined style={{ color: '#ff4d4f' }} />
+              <span>皮肤跟进提醒</span>
+              <Tag color="red">{followUpCustomers.length}</Tag>
+            </Space>
+          }
+          size="small"
+        >
+          <Space wrap size={[12, 12]}>
+            {followUpCustomers.map((skin: CustomerSkinStatus) => {
+              const customer = state.customers.find((c) => c.id === skin.customerId);
+              if (!customer || !skin.latest) return null;
+              return (
+                <div
+                  key={skin.customerId}
+                  className="skin-followup-item"
+                  onClick={() => navigate(`/customers/${skin.customerId}`)}
+                >
+                  <Avatar size="small" src={customer.avatar} />
+                  <span className="skin-followup-name">{customer.name}</span>
+                  <Tag color="red" icon={<PhoneOutlined />}>
+                    连续{skin.decliningStreak}次变差
+                  </Tag>
+                  <WarningTags
+                    conditionWorse={skin.conditionWorse}
+                    sensitivityWorseToObvious={skin.sensitivityWorseToObvious}
+                  />
+                  <span className="skin-followup-date">{formatDate(skin.latest.analysisDate)}</span>
+                </div>
+              );
+            })}
+          </Space>
+        </Card>
+      )}
 
       <div className="search-bar">
         <Row gutter={16}>

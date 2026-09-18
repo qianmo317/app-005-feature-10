@@ -59,26 +59,89 @@ export const mockCustomers = () => {
   return customers;
 };
 
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+/** 生成最近 months 个月内的检测日期（yyyy-MM-dd），配合排序保证同一顾客记录按时间对比 */
+const monthlyAnalysisDate = (monthsBack: number): string => {
+  const base = new Date(2026, 8, 18);
+  // 先定日再定月，避免从 31 日回退到小月时月份溢出
+  const date = new Date(base.getFullYear(), base.getMonth(), Random.integer(1, 25));
+  date.setMonth(date.getMonth() - monthsBack);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+};
+
 export const mockSkinAnalyses = (customerIds: string[]) => {
   const analyses = [];
   const skinTypes = ['干性', '油性', '混合性', '敏感肌', '中性'];
   const conditions = ['良好', '一般', '需改善', '较差'];
+  const oilinessLevels = ['偏低', '正常', '偏高'];
+  const moistureLevels = ['偏低', '正常', '偏高'];
+  const elasticityLevels = ['良好', '一般', '需改善'];
+  const sensitivityLevels = ['无', '轻微', '明显'];
+
+  let seq = 0;
+  const addRecord = (
+    customerId: string,
+    monthsBack: number,
+    values: Partial<{
+      skinType: string;
+      oiliness: string;
+      moisture: string;
+      elasticity: string;
+      sensitivity: string;
+      skinCondition: string;
+    }> = {}
+  ) => {
+    seq += 1;
+    analyses.push({
+      id: `SA${String(seq).padStart(6, '0')}`,
+      customerId,
+      analysisDate: monthlyAnalysisDate(monthsBack),
+      skinType: values.skinType ?? skinTypes[Random.integer(0, 4)],
+      oiliness: values.oiliness ?? oilinessLevels[Random.integer(0, 2)],
+      moisture: values.moisture ?? moistureLevels[Random.integer(0, 2)],
+      elasticity: values.elasticity ?? elasticityLevels[Random.integer(0, 2)],
+      sensitivity: values.sensitivity ?? sensitivityLevels[Random.integer(0, 2)],
+      skinCondition: values.skinCondition ?? conditions[Random.integer(0, 3)],
+      recommendations: Random.cparagraph(1)
+    });
+  };
 
   customerIds.forEach((customerId, index) => {
+    // 确定场景一：连续 4 次综合变差 + 敏感度升至“明显” + 整体状况变差，需跟进
+    if (index === 0) {
+      addRecord(customerId, 4, { oiliness: '正常', moisture: '偏高', elasticity: '良好', sensitivity: '无', skinCondition: '良好' });
+      addRecord(customerId, 3, { oiliness: '偏高', moisture: '正常', elasticity: '良好', sensitivity: '无', skinCondition: '良好' });
+      addRecord(customerId, 2, { oiliness: '偏高', moisture: '偏低', elasticity: '一般', sensitivity: '轻微', skinCondition: '一般' });
+      addRecord(customerId, 1, { oiliness: '偏高', moisture: '偏低', elasticity: '需改善', sensitivity: '轻微', skinCondition: '需改善' });
+      addRecord(customerId, 0, { oiliness: '偏高', moisture: '偏低', elasticity: '需改善', sensitivity: '明显', skinCondition: '较差' });
+      return;
+    }
+
+    // 确定场景二：仅最近一次变差（只警示，不进入跟进），敏感度升至“明显”
+    if (index === 1) {
+      addRecord(customerId, 1, { oiliness: '正常', moisture: '正常', elasticity: '良好', sensitivity: '轻微', skinCondition: '良好' });
+      addRecord(customerId, 0, { oiliness: '偏高', moisture: '偏低', elasticity: '良好', sensitivity: '明显', skinCondition: '一般' });
+      return;
+    }
+
+    // 确定场景三：连续 2 次变差，进入跟进，但没有警示标记
+    if (index === 2) {
+      addRecord(customerId, 2, { oiliness: '正常', moisture: '偏高', elasticity: '良好', sensitivity: '无', skinCondition: '良好' });
+      addRecord(customerId, 1, { oiliness: '偏高', moisture: '正常', elasticity: '一般', sensitivity: '无', skinCondition: '良好' });
+      addRecord(customerId, 0, { oiliness: '偏低', moisture: '偏低', elasticity: '一般', sensitivity: '轻微', skinCondition: '良好' });
+      return;
+    }
+
+    // 确定场景四：只有一条记录，展示“初次建档”
+    if (index === 3) {
+      addRecord(customerId, 0);
+      return;
+    }
+
     const count = Random.integer(1, 5);
-    for (let i = 0; i < count; i++) {
-      analyses.push({
-        id: `SA${String(analyses.length + 1).padStart(6, '0')}`,
-        customerId,
-        analysisDate: Random.datetime('yyyy-MM-dd'),
-        skinType: skinTypes[Random.integer(0, 4)],
-        oiliness: ['偏低', '正常', '偏高'][Random.integer(0, 2)],
-        moisture: ['偏低', '正常', '偏高'][Random.integer(0, 2)],
-        elasticity: ['良好', '一般', '需改善'][Random.integer(0, 2)],
-        sensitivity: ['无', '轻微', '明显'][Random.integer(0, 2)],
-        skinCondition: conditions[Random.integer(0, 3)],
-        recommendations: Random.cparagraph(1)
-      });
+    for (let i = count - 1; i >= 0; i--) {
+      addRecord(customerId, i);
     }
   });
   return analyses;

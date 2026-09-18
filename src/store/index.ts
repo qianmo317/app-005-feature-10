@@ -52,14 +52,17 @@ interface AppState {
   commissions: Commission[];
   waitList: WaitList[];
   initialized: boolean;
+  dataVersion: number;
 }
 
 const STORAGE_KEY = 'app_state';
+// 升级 mock 数据结构（皮肤分析按日期升序、含确定的趋势场景）时递增，旧缓存自动重建
+const DATA_VERSION = 2;
 
 const loadState = (): AppState => {
   try {
     const saved = storage.get<AppState>(STORAGE_KEY);
-    if (saved && saved.initialized) {
+    if (saved && saved.initialized && saved.dataVersion === DATA_VERSION) {
       // Verify data integrity
       const firstCustomer = saved.customers[0];
       if (firstCustomer && firstCustomer.avatar && firstCustomer.avatar.includes('data:image/svg+xml;base64,')) {
@@ -101,7 +104,8 @@ const loadState = (): AppState => {
     attendance: mockAttendance(employeeIds),
     commissions: mockCommissions(employeeIds),
     waitList: mockWaitList(customerIds, serviceIds),
-    initialized: true
+    initialized: true,
+    dataVersion: DATA_VERSION
   };
 };
 
@@ -132,6 +136,18 @@ const appSlice = createSlice({
     },
     addSkinAnalysis: (state, action: PayloadAction<SkinAnalysis>) => {
       state.skinAnalyses.unshift(action.payload);
+      saveState(state);
+    },
+    updateSkinAnalysis: (state, action: PayloadAction<SkinAnalysis>) => {
+      const index = state.skinAnalyses.findIndex(s => s.id === action.payload.id);
+      if (index !== -1) {
+        state.skinAnalyses[index] = action.payload;
+        // 检测数据被改后，趋势对比由选择时现算，不持久化，保存后自动重算
+        saveState(state);
+      }
+    },
+    deleteSkinAnalysis: (state, action: PayloadAction<string>) => {
+      state.skinAnalyses = state.skinAnalyses.filter(s => s.id !== action.payload);
       saveState(state);
     },
     addAllergy: (state, action: PayloadAction<Allergy>) => {
@@ -246,6 +262,8 @@ export const {
   updateCustomer,
   deleteCustomer,
   addSkinAnalysis,
+  updateSkinAnalysis,
+  deleteSkinAnalysis,
   addAllergy,
   updateAllergy,
   deleteAllergy,

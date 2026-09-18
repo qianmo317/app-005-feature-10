@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Tabs,
   Descriptions,
@@ -17,7 +17,8 @@ import {
   Rate,
   Row,
   Col,
-  Progress
+  Progress,
+  Alert
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -25,7 +26,8 @@ import {
   EditOutlined,
   DeleteOutlined,
   ClockCircleOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  PhoneOutlined
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSelector, useDispatch } from 'react-redux';
@@ -33,12 +35,20 @@ import ReactECharts from 'echarts-for-react';
 import type { RootState } from '../../store';
 import {
   addSkinAnalysis,
+  updateSkinAnalysis,
+  deleteSkinAnalysis,
   addAllergy,
   updateAllergy,
   deleteAllergy
 } from '../../store';
 import type { SkinAnalysis, Allergy } from '../../types';
 import { formatDate, formatCurrency, generateId, getStatusText } from '../../utils/format';
+import {
+  buildCustomerTrends,
+  getCustomerSkinStatus,
+  type RecordTrend
+} from '../../utils/skinTrend';
+import { OverallTrendTag, MetricCell, WarningTags } from '../../components/SkinTrend';
 import dayjs from 'dayjs';
 
 const CustomerDetail: React.FC = () => {
@@ -49,15 +59,25 @@ const CustomerDetail: React.FC = () => {
   const [skinAnalysisModal, setSkinAnalysisModal] = useState(false);
   const [allergyModal, setAllergyModal] = useState(false);
   const [editingAllergy, setEditingAllergy] = useState<Allergy | null>(null);
+  const [editingSkinAnalysis, setEditingSkinAnalysis] = useState<SkinAnalysis | null>(null);
   const [skinForm] = Form.useForm();
   const [allergyForm] = Form.useForm();
 
   const customer = state.customers.find((c) => c.id === id);
   const membership = state.memberships.find((m) => m.customerId === id);
-  const skinAnalyses = state.skinAnalyses
-    .filter((s) => s.customerId === id)
-    .sort((a, b) => new Date(b.analysisDate).getTime() - new Date(a.analysisDate).getTime());
   const allergies = state.allergies.filter((a) => a.customerId === id);
+
+  // 皮肤检测趋势：新增 / 编辑 / 删除记录后，这里随 Redux 状态重新计算，对比结果不入库
+  const skinTrends = useMemo<RecordTrend[]>(
+    () => buildCustomerTrends(state.skinAnalyses.filter((s) => s.customerId === id)),
+    [state.skinAnalyses, id]
+  );
+  // 时间正序计算，列表按日期倒序展示（最新一条在最前）
+  const skinTrendsDesc = useMemo(() => [...skinTrends].reverse(), [skinTrends]);
+  const skinStatus = useMemo(
+    () => getCustomerSkinStatus(state.skinAnalyses.filter((s) => s.customerId === id)),
+    [state.skinAnalyses, id]
+  );
   const serviceRecords = state.serviceRecords
     .filter((r) => r.customerId === id)
     .sort((a, b) => new Date(b.serviceDate).getTime() - new Date(a.serviceDate).getTime());
@@ -109,28 +129,72 @@ const CustomerDetail: React.FC = () => {
     ],
   };
 
-  const handleAddSkinAnalysis = async () => {
+  const handleSubmitSkinAnalysis = async () => {
     try {
       const values = await skinForm.validateFields();
-      const analysis: SkinAnalysis = {
-        id: generateId(),
-        customerId: id!,
-        analysisDate: dayjs(values.analysisDate).format('YYYY-MM-DD'),
-        skinType: values.skinType,
-        oiliness: values.oiliness,
-        moisture: values.moisture,
-        elasticity: values.elasticity,
-        sensitivity: values.sensitivity,
-        skinCondition: values.skinCondition,
-        recommendations: values.recommendations,
-      };
-      dispatch(addSkinAnalysis(analysis));
-      message.success('添加皮肤分析成功');
+      if (editingSkinAnalysis) {
+        dispatch(
+          updateSkinAnalysis({
+            ...editingSkinAnalysis,
+            analysisDate: dayjs(values.analysisDate).format('YYYY-MM-DD'),
+            skinType: values.skinType,
+            oiliness: values.oiliness,
+            moisture: values.moisture,
+            elasticity: values.elasticity,
+            sensitivity: values.sensitivity,
+            skinCondition: values.skinCondition,
+            recommendations: values.recommendations,
+          })
+        );
+        message.success('检测记录已更新，对比结果已重新计算');
+      } else {
+        const analysis: SkinAnalysis = {
+          id: generateId(),
+          customerId: id!,
+          analysisDate: dayjs(values.analysisDate).format('YYYY-MM-DD'),
+          skinType: values.skinType,
+          oiliness: values.oiliness,
+          moisture: values.moisture,
+          elasticity: values.elasticity,
+          sensitivity: values.sensitivity,
+          skinCondition: values.skinCondition,
+          recommendations: values.recommendations,
+        };
+        dispatch(addSkinAnalysis(analysis));
+        message.success('添加皮肤分析成功');
+      }
       setSkinAnalysisModal(false);
+      setEditingSkinAnalysis(null);
       skinForm.resetFields();
     } catch {
       // validation error
     }
+  };
+
+  const handleEditSkinAnalysis = (analysis: SkinAnalysis) => {
+    setEditingSkinAnalysis(analysis);
+    skinForm.setFieldsValue({
+      analysisDate: dayjs(analysis.analysisDate),
+      skinType: analysis.skinType,
+      oiliness: analysis.oiliness,
+      moisture: analysis.moisture,
+      elasticity: analysis.elasticity,
+      sensitivity: analysis.sensitivity,
+      skinCondition: analysis.skinCondition,
+      recommendations: analysis.recommendations,
+    });
+    setSkinAnalysisModal(true);
+  };
+
+  const handleDeleteSkinAnalysis = (analysisId: string) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: '删除后相邻检测的对比结果会重新计算，确定删除该条检测记录吗？',
+      onOk: () => {
+        dispatch(deleteSkinAnalysis(analysisId));
+        message.success('删除成功，对比结果已重新计算');
+      },
+    });
   };
 
   const handleAddAllergy = async () => {
@@ -274,48 +338,115 @@ const CustomerDetail: React.FC = () => {
             key: 'skin',
             label: '皮肤分析记录',
             children: (
-              <Card
-                className="card-wrapper"
-                title="皮肤分析记录"
-                extra={
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    onClick={() => setSkinAnalysisModal(true)}
-                  >
-                    添加记录
-                  </Button>
-                }
-              >
-                {skinAnalyses.length > 0 ? (
-                  <List
-                    dataSource={skinAnalyses}
-                    renderItem={(item) => (
-                      <List.Item key={item.id} style={{ padding: '16px 0', borderBottom: '1px solid #f5f5f5' }}>
-                        <List.Item.Meta
-                          avatar={<ClockCircleOutlined style={{ fontSize: 24, color: '#C9A86C' }} />}
-                          title={`${formatDate(item.analysisDate)} · ${item.skinType}`}
-                          description={
-                            <Space direction="vertical" size={4}>
-                              <Space size={16}>
-                                <span>油脂: {item.oiliness}</span>
-                                <span>水分: {item.moisture}</span>
-                                <span>弹性: {item.elasticity}</span>
-                                <span>敏感: {item.sensitivity}</span>
-                              </Space>
-                              <span>状况: {item.skinCondition}</span>
-                              <span>建议: {item.recommendations}</span>
-                            </Space>
-                          }
-                        />
-                      </List.Item>
-                    )}
+              <>
+                {skinStatus?.followUp && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    icon={<PhoneOutlined />}
+                    style={{ marginBottom: 16, borderRadius: 12 }}
+                    message={`连续 ${skinStatus.decliningStreak} 次检测变差，建议尽快跟进`}
+                    description="可主动联系顾客了解近况，并安排针对性的舒缓 / 修复护理。"
                   />
-                ) : (
-                  <div className="empty-state">暂无皮肤分析记录</div>
                 )}
-              </Card>
+                {!skinStatus?.followUp && skinStatus?.warning && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16, borderRadius: 12 }}
+                    message="最近一次检测出现异常变化，请关注并跟进"
+                  />
+                )}
+                <Card
+                  className="card-wrapper"
+                  title={`皮肤分析记录（共 ${skinTrends.length} 次）`}
+                  extra={
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<PlusOutlined />}
+                      onClick={() => {
+                        setEditingSkinAnalysis(null);
+                        skinForm.resetFields();
+                        setSkinAnalysisModal(true);
+                      }}
+                    >
+                      添加记录
+                    </Button>
+                  }
+                >
+                  {skinTrendsDesc.length > 0 ? (
+                    <List
+                      dataSource={skinTrendsDesc}
+                      renderItem={(trend) => (
+                        <List.Item
+                          key={trend.record.id}
+                          style={{ padding: '16px 0', borderBottom: '1px solid #f5f5f5' }}
+                          actions={[
+                            <Button
+                              key="edit"
+                              type="link"
+                              size="small"
+                              icon={<EditOutlined />}
+                              onClick={() => handleEditSkinAnalysis(trend.record)}
+                            >
+                              编辑
+                            </Button>,
+                            <Button
+                              key="delete"
+                              type="link"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={() => handleDeleteSkinAnalysis(trend.record.id)}
+                            >
+                              删除
+                            </Button>,
+                          ]}
+                        >
+                          <List.Item.Meta
+                            avatar={<ClockCircleOutlined style={{ fontSize: 24, color: '#C9A86C' }} />}
+                            title={
+                              <Space wrap>
+                                <span>{formatDate(trend.record.analysisDate)}</span>
+                                <span>· {trend.record.skinType}</span>
+                                <OverallTrendTag direction={trend.overall} />
+                                {(trend.conditionWorse || trend.sensitivityWorseToObvious) && (
+                                  <WarningTags
+                                    conditionWorse={trend.conditionWorse}
+                                    sensitivityWorseToObvious={trend.sensitivityWorseToObvious}
+                                  />
+                                )}
+                              </Space>
+                            }
+                            description={
+                              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                <div className="skin-metric-grid">
+                                  {trend.metrics
+                                    .filter((m) => m.key !== 'skinCondition')
+                                    .map((metric) => (
+                                      <MetricCell key={metric.key} metric={metric} />
+                                    ))}
+                                </div>
+                                <div>
+                                  <MetricCell
+                                    metric={trend.metrics.find((m) => m.key === 'skinCondition')!}
+                                  />
+                                </div>
+                                <span style={{ color: '#8c8c8c' }}>
+                                  建议: {trend.record.recommendations || '无'}
+                                </span>
+                              </Space>
+                            }
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  ) : (
+                    <div className="empty-state">暂无皮肤分析记录</div>
+                  )}
+                </Card>
+              </>
             ),
           },
           {
@@ -502,10 +633,13 @@ const CustomerDetail: React.FC = () => {
       />
 
       <Modal
-        title="添加皮肤分析记录"
+        title={editingSkinAnalysis ? '编辑皮肤分析记录' : '添加皮肤分析记录'}
         open={skinAnalysisModal}
-        onOk={handleAddSkinAnalysis}
-        onCancel={() => setSkinAnalysisModal(false)}
+        onOk={handleSubmitSkinAnalysis}
+        onCancel={() => {
+          setSkinAnalysisModal(false);
+          setEditingSkinAnalysis(null);
+        }}
         okText="确认"
         cancelText="取消"
         width={600}
